@@ -276,11 +276,18 @@ const handleKeyPress = (e) => {
 function App() {
     const state = store.getState();
     let screenComponent;
-    switch (state.screen) {
-        case 'lobby': screenComponent = LobbyScreen(); break;
-        case 'game': screenComponent = GameScreen(); break;
-        case 'gameover': screenComponent = GameOverScreen(); break;
-        default: screenComponent = NicknameScreen(); break;
+
+    // Route guard
+    if (!state.nickname && state.screen !== 'nickname') {
+        router.navigate('#/nickname');
+        screenComponent = NicknameScreen(); // Render nickname screen while navigating
+    } else {
+        switch (state.screen) {
+            case 'lobby': screenComponent = LobbyScreen(); break;
+            case 'game': screenComponent = GameScreen(); break;
+            case 'gameover': screenComponent = GameOverScreen(); break;
+            default: screenComponent = NicknameScreen(); break;
+        }
     }
     return FacileJS.createElement('div', { class: 'app-container', tabindex: '0', autofocus: true, onkeydown: handleKeyDown, onkeyup: handleKeyUp, onkeypress: handleKeyPress, }, screenComponent);
 }

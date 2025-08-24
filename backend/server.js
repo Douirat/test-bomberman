@@ -117,27 +117,42 @@ wss.on('connection', (ws) => {
 
   ws.on('message', (rawMessage) => {
     const data = JSON.parse(rawMessage);
-    const player = lobbyState.players.find(p => p.ws === ws);
 
-    if (!player) return; // Only process messages from players in the lobby/game
+    // Handle JOIN_GAME message separately, as it's the entry point for a player.
+    if (data.type === 'JOIN_GAME') {
+      const existingPlayer = lobbyState.players.find(p => p.ws === ws);
+      if (!existingPlayer && lobbyState.players.length < 4 && lobbyState.status !== 'inprogress') {
+        const newPlayer = {
+          id: `player-${Math.random().toString(36).substr(2, 9)}`,
+          ws: ws,
+          nickname: data.payload.nickname,
+          isAlive: true,
+          // Add other player stats as needed from game.js
+        };
+        lobbyState.players.push(newPlayer);
+        ws.playerId = newPlayer.id; // Associate ws connection with a player ID
+        broadcastLobbyState();
+
+        if (lobbyState.players.length >= 2 && lobbyState.status === 'waiting' && !lobbyState.lobbyTimer) {
+            console.log('Setting 20-second lobby timer...');
+            lobbyState.lobbyTimer = setTimeout(startGameCountdown, LOBBY_WAIT_TIME);
+        }
+        if (lobbyState.players.length === 4 && lobbyState.status === 'waiting') {
+            console.log('Four players have joined. Starting countdown immediately.');
+            startGameCountdown();
+        }
+      }
+      return; // Stop processing further for this message
+    }
+
+    // For all other messages, a player must exist.
+    const player = lobbyState.players.find(p => p.ws === ws);
+    if (!player) {
+        console.log('Message from unknown player ignored');
+        return;
+    }
 
     switch (data.type) {
-      case 'JOIN_GAME':
-        // This is handled before the player exists, so we can't use the 'player' variable yet.
-        // The logic for joining is separate.
-        const joiner = lobbyState.players.find(p => p.ws === ws);
-        if (!joiner && lobbyState.players.length < 4 && lobbyState.status === 'waiting') {
-          const newPlayer = { id: lobbyState.players.length + 1, ws: ws, nickname: data.payload.nickname };
-          lobbyState.players.push(newPlayer);
-          ws.playerId = newPlayer.id;
-          broadcastLobbyState();
-          if (lobbyState.players.length === 4) {
-              startGameCountdown();
-          } else if (lobbyState.players.length >= 2 && !lobbyState.lobbyTimer) {
-              lobbyState.lobbyTimer = setTimeout(startGameCountdown, LOBBY_WAIT_TIME);
-          }
-        }
-        break;
       case 'SEND_CHAT_MESSAGE':
         broadcast({ type: 'NEW_CHAT_MESSAGE', payload: { nickname: player.nickname, message: data.payload.message } });
         break;
@@ -154,7 +169,10 @@ wss.on('connection', (ws) => {
         }
         break;
       case 'PLACE_BOMB':
-        if (mainGameState) handlePlaceBomb(player, mainGameState);
+        if (mainGameState) {
+            const gamePlayer = mainGameState.players.find(p => p.id === player.id);
+            if (gamePlayer) handlePlaceBomb(gamePlayer, mainGameState);
+        }
         break;
     }
   });
