@@ -1,29 +1,34 @@
 
 export const createRouter = (store) => {
- 
-  const getRoute = () => {
-    const hash = window.location.hash;
-    switch (hash) {
-      case '#/active':
-        return 'active';
-      case '#/completed':
-        return 'completed';
-      default:
-        return 'all';
-    }
+  const routes = {
+    '#/nickname': 'nickname',
+    '#/lobby': 'lobby',
+    '#/game': 'game',
+    '#/gameover': 'gameover',
   };
 
-  
+  const getScreenFromHash = () => {
+    const hash = window.location.hash || '#/nickname';
+    return routes[hash] || 'nickname';
+  };
+
   const handleHashChange = () => {
-    const route = getRoute();
+    const screen = getScreenFromHash();
     store.dispatch({
-      type: 'SET_FILTER',
-      payload: route,
+      type: 'SET_SCREEN',
+      payload: screen,
     });
   };
 
- 
-  window.onhashchange = handleHashChange;
+  window.addEventListener('hashchange', handleHashChange);
 
+  // Initial route handling
   handleHashChange();
+
+  // Function to navigate
+  const navigate = (path) => {
+    window.location.hash = path;
+  };
+
+  return { navigate };
 };

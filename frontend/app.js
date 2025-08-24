@@ -1,4 +1,5 @@
 import FacileJS from './framework/index.js';
+import { createRouter } from './framework/router.js';
 
 // --- WebSocket Connection ---
 const ws = new WebSocket('ws://localhost:8080');
@@ -6,6 +7,15 @@ ws.onopen = () => console.log('Connected to the server');
 ws.onmessage = (event) => {
   const message = JSON.parse(event.data);
   store.dispatch({ type: message.type, payload: message.payload });
+
+  // Navigate based on server messages
+  if (message.type === 'UPDATE_LOBBY_STATE') {
+    router.navigate('#/lobby');
+  } else if (message.type === 'START_GAME') {
+    router.navigate('#/game');
+  } else if (message.type === 'GAME_OVER') {
+    router.navigate('#/gameover');
+  }
 };
 ws.onclose = () => console.log('Disconnected from the server');
 ws.onerror = (error) => console.error('WebSocket Error:', error);
@@ -15,7 +25,7 @@ const TILE = { EMPTY: 0, BLOCK: 1, WALL: 2 };
 
 // --- State Management ---
 const initialState = {
-  screen: 'nickname',
+  screen: 'nickname', // Default screen
   nickname: '',
   lobby: { players: [], countdown: null, status: 'waiting' },
   chatMessages: [],
@@ -28,14 +38,16 @@ function reducer(state = initialState, action) {
     return state;
   }
   switch (action.type) {
+    case 'SET_SCREEN':
+      return { ...state, screen: action.payload };
     case 'SET_NICKNAME':
       return { ...state, nickname: action.payload };
     case 'UPDATE_LOBBY_STATE':
-      return { ...state, lobby: action.payload, screen: 'lobby' };
+      return { ...state, lobby: action.payload };
     case 'UPDATE_COUNTDOWN':
       return { ...state, lobby: { ...state.lobby, countdown: action.payload } };
     case 'START_GAME':
-      return { ...state, screen: 'game', gameState: action.payload, winner: null };
+      return { ...state, gameState: action.payload, winner: null };
     case 'NEW_CHAT_MESSAGE':
       return { ...state, chatMessages: [...state.chatMessages, action.payload] };
     case 'GAME_STATE_DIFF': {
@@ -90,13 +102,14 @@ function reducer(state = initialState, action) {
       return { ...state, gameState: newGameState };
     }
     case 'GAME_OVER':
-      return { ...state, screen: 'gameover', winner: action.payload.winner };
+      return { ...state, winner: action.payload.winner };
     default:
       return state;
   }
 }
 
 const store = FacileJS.createStore(reducer);
+const router = createRouter(store);
 
 // --- High-Performance Board Renderer ---
 const boardManager = {
@@ -290,7 +303,13 @@ function ChatComponent() {
 function NicknameScreen() {
     let nickname = '';
     const handleInput = (e) => { nickname = e.target.value; };
-    const handleJoin = () => { if (nickname.trim().length > 0) { store.dispatch({ type: 'SET_NICKNAME', payload: nickname }); ws.send(JSON.stringify({ type: 'JOIN_GAME', payload: { nickname } })); } };
+    const handleJoin = () => {
+        if (nickname.trim().length > 0) {
+            store.dispatch({ type: 'SET_NICKNAME', payload: nickname });
+            ws.send(JSON.stringify({ type: 'JOIN_GAME', payload: { nickname } }));
+            router.navigate('#/lobby');
+        }
+    };
     return FacileJS.createElement('div', { class: 'container nickname-screen' },
         FacileJS.createElement('h1', {}, 'Bomberman-DOM'),
         FacileJS.createElement('input', { type: 'text', placeholder: 'Enter your nickname', oninput: handleInput, onkeyup: (e) => e.keyCode === 13 && handleJoin() }),
