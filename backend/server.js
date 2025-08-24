@@ -1,5 +1,5 @@
 const WebSocket = require('ws');
-const { createInitialGameState, handlePlayerMove, handlePlaceBomb, handleExplosions } = require('./game.js');
+const { createInitialGameState, handlePlayerStartMoving, handlePlayerStopMoving, updatePlayerPosition, handlePlaceBomb, handleExplosions } = require('./game.js');
 
 const wss = new WebSocket.Server({ port: 8080 });
 console.log('Server started on port 8080');
@@ -48,20 +48,33 @@ function startGame() {
 function gameTick() {
     if (!mainGameState) return;
 
-    // 1. Decrement bomb timers
+    mainGameState.changes = [];
+
+    // 1. Update all player positions based on their current movement state
+    mainGameState.players.forEach(player => {
+        updatePlayerPosition(player, mainGameState);
+    });
+
+    // 2. Decrement bomb timers
     mainGameState.bombs.forEach(bomb => bomb.timer -= GAME_TICK_RATE / 1000);
 
-    // 2. Handle explosions
+    // 3. Handle explosions
     handleExplosions(mainGameState);
 
-    // 3. Decrement explosion effect timers
+    // 4. Decrement explosion effect timers and filter them out
+    const initialExplosionCount = mainGameState.explosions.length;
     mainGameState.explosions.forEach(exp => exp.timer -= GAME_TICK_RATE / 1000);
     mainGameState.explosions = mainGameState.explosions.filter(exp => exp.timer > 0);
+    if (mainGameState.explosions.length < initialExplosionCount) {
+        mainGameState.changes.push({ type: 'EXPLOSIONS_CLEARED', payload: { explosions: mainGameState.explosions } });
+    }
 
-    // 4. Broadcast the new state
-    broadcast({ type: 'GAME_STATE_UPDATE', payload: mainGameState });
+    // 5. Broadcast the diff if there are any changes
+    if (mainGameState.changes.length > 0) {
+        broadcast({ type: 'GAME_STATE_DIFF', payload: mainGameState.changes });
+    }
 
-    // 5. Check for win condition
+    // 6. Check for win condition
     const alivePlayers = mainGameState.players.filter(p => p.isAlive);
     if (alivePlayers.length <= 1) {
         clearInterval(gameLoopInterval);
@@ -106,51 +119,68 @@ wss.on('connection', (ws) => {
     const data = JSON.parse(rawMessage);
     const player = lobbyState.players.find(p => p.ws === ws);
 
+    if (!player) return; // Only process messages from players in the lobby/game
+
     switch (data.type) {
       case 'JOIN_GAME':
-        if (lobbyState.players.length < 2 && lobbyState.status === 'waiting') {
+        // This is handled before the player exists, so we can't use the 'player' variable yet.
+        // The logic for joining is separate.
+        const joiner = lobbyState.players.find(p => p.ws === ws);
+        if (!joiner && lobbyState.players.length < 4 && lobbyState.status === 'waiting') {
           const newPlayer = { id: lobbyState.players.length + 1, ws: ws, nickname: data.payload.nickname };
           lobbyState.players.push(newPlayer);
           ws.playerId = newPlayer.id;
           broadcastLobbyState();
-          if (lobbyState.players.length === 4) startGameCountdown();
-          else if (lobbyState.players.length >= 2 && !lobbyState.lobbyTimer) {
-            lobbyState.lobbyTimer = setTimeout(startGameCountdown, LOBBY_WAIT_TIME);
+          if (lobbyState.players.length === 4) {
+              startGameCountdown();
+          } else if (lobbyState.players.length >= 2 && !lobbyState.lobbyTimer) {
+              lobbyState.lobbyTimer = setTimeout(startGameCountdown, LOBBY_WAIT_TIME);
           }
         }
         break;
       case 'SEND_CHAT_MESSAGE':
-        if (player) broadcast({ type: 'NEW_CHAT_MESSAGE', payload: { nickname: player.nickname, message: data.payload.message } });
+        broadcast({ type: 'NEW_CHAT_MESSAGE', payload: { nickname: player.nickname, message: data.payload.message } });
         break;
-      case 'MOVE_PLAYER':
-        if (mainGameState && player) {
+      case 'START_MOVING':
+        if (mainGameState) {
             const gamePlayer = mainGameState.players.find(p => p.id === player.id);
-            if (gamePlayer) handlePlayerMove(gamePlayer, data.payload, mainGameState);
+            if (gamePlayer) handlePlayerStartMoving(gamePlayer, data.payload);
+        }
+        break;
+      case 'STOP_MOVING':
+        if (mainGameState) {
+            const gamePlayer = mainGameState.players.find(p => p.id === player.id);
+            if (gamePlayer) handlePlayerStopMoving(gamePlayer, data.payload);
         }
         break;
       case 'PLACE_BOMB':
-        if (mainGameState && player) handlePlaceBomb(player, mainGameState);
+        if (mainGameState) handlePlaceBomb(player, mainGameState);
         break;
     }
   });
 
   ws.on('close', () => {
-    const player = lobbyState.players.find(p => p.ws === ws);
-    if (player) {
+    const playerIndex = lobbyState.players.findIndex(p => p.ws === ws);
+    if (playerIndex !== -1) {
+        const player = lobbyState.players[playerIndex];
         console.log(`Player ${player.nickname} disconnected`);
-        lobbyState.players = lobbyState.players.filter(p => p.id !== player.id);
+        lobbyState.players.splice(playerIndex, 1);
+
         if (lobbyState.status !== 'inprogress') {
             if (lobbyState.players.length < 2) {
                 clearTimeout(lobbyState.lobbyTimer);
+                if (lobbyState.countdownTimer) clearInterval(lobbyState.countdownTimer.interval);
                 lobbyState.lobbyTimer = null;
-            }
-            if (lobbyState.status === 'countdown') {
-                clearInterval(lobbyState.countdownTimer.interval);
+                lobbyState.countdownTimer = null;
                 lobbyState.status = 'waiting';
             }
             broadcastLobbyState();
-        } else {
-            mainGameState.players = mainGameState.players.filter(p => p.id !== player.id);
+        } else if (mainGameState) {
+            const gamePlayer = mainGameState.players.find(p => p.id === player.id);
+            if(gamePlayer) {
+                gamePlayer.isAlive = false;
+                mainGameState.changes.push({ type: 'PLAYER_DIED', payload: { id: player.id } });
+            }
         }
     }
   });

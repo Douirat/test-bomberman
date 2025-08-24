@@ -5,7 +5,6 @@ const ws = new WebSocket('ws://localhost:8080');
 ws.onopen = () => console.log('Connected to the server');
 ws.onmessage = (event) => {
   const message = JSON.parse(event.data);
-  // console.log('Received:', message); // Too noisy for game updates
   store.dispatch({ type: message.type, payload: message.payload });
 };
 ws.onclose = () => console.log('Disconnected from the server');
@@ -20,11 +19,14 @@ const initialState = {
   nickname: '',
   lobby: { players: [], countdown: null, status: 'waiting' },
   chatMessages: [],
-  gameState: { map: [], players: [], powerUps: [] },
+  gameState: { map: [], players: [], bombs: [], explosions: [], powerUps: [] },
   winner: null,
 };
 
 function reducer(state = initialState, action) {
+  if (!action || !action.type) {
+    return state;
+  }
   switch (action.type) {
     case 'SET_NICKNAME':
       return { ...state, nickname: action.payload };
@@ -36,10 +38,59 @@ function reducer(state = initialState, action) {
       return { ...state, screen: 'game', gameState: action.payload, winner: null };
     case 'NEW_CHAT_MESSAGE':
       return { ...state, chatMessages: [...state.chatMessages, action.payload] };
-    case 'GAME_STATE_UPDATE': // Server sends the whole state
-        return { ...state, gameState: action.payload };
+    case 'GAME_STATE_DIFF': {
+      const newGameState = JSON.parse(JSON.stringify(state.gameState));
+
+      for (const change of action.payload) {
+        switch (change.type) {
+          case 'PLAYER_MOVED': {
+            const player = newGameState.players.find(p => p.id === change.payload.id);
+            if (player) {
+              player.x = change.payload.x;
+              player.y = change.payload.y;
+            }
+            break;
+          }
+          case 'BOMB_PLACED':
+            newGameState.bombs.push(change.payload);
+            break;
+          case 'EXPLOSION_STARTED':
+            newGameState.explosions.push(change.payload);
+            break;
+          case 'EXPLOSIONS_CLEARED':
+            newGameState.explosions = change.payload.explosions;
+            break;
+          case 'PLAYER_DAMAGED': {
+            const player = newGameState.players.find(p => p.id === change.payload.id);
+            if (player) player.lives = change.payload.lives;
+            break;
+          }
+          case 'PLAYER_DIED': {
+            const player = newGameState.players.find(p => p.id === change.payload.id);
+            if (player) player.isAlive = false;
+            break;
+          }
+          case 'POWERUP_SPAWNED':
+            newGameState.powerUps.push(change.payload);
+            break;
+          case 'POWERUP_COLLECTED':
+            newGameState.powerUps = newGameState.powerUps.filter(p => !(p.x === change.payload.x && p.y === change.payload.y));
+            break;
+          case 'PLAYER_STATS_CHANGED': {
+              const player = newGameState.players.find(p => p.id === change.payload.id);
+              if (player) {
+                  player.bombs = change.payload.bombs;
+                  player.flame = change.payload.flame;
+                  player.speed = change.payload.speed;
+              }
+              break;
+          }
+        }
+      }
+      return { ...state, gameState: newGameState };
+    }
     case 'GAME_OVER':
-        return { ...state, screen: 'gameover', winner: action.payload.winner };
+      return { ...state, screen: 'gameover', winner: action.payload.winner };
     default:
       return state;
   }
@@ -47,27 +98,163 @@ function reducer(state = initialState, action) {
 
 const store = FacileJS.createStore(reducer);
 
-// --- Event Handlers (Framework-Compliant) ---
+// --- High-Performance Board Renderer ---
+const boardManager = {
+    CELL_SIZE: 50,
+    dynamicElementContainer: null,
+    playerPool: new Map(),
+    bombPool: new Map(),
+    explosionPool: new Map(),
+    powerUpPool: new Map(),
+    activeElements: new Set(),
+
+    createBoard(map) {
+        const wallAndBlockCells = [];
+        map.forEach((row, y) => {
+            row.forEach((tile, x) => {
+                if (tile === TILE.WALL || tile === TILE.BLOCK) {
+                    const tileClass = tile === TILE.WALL ? 'cell wall' : 'cell block';
+                    wallAndBlockCells.push(FacileJS.createElement('div', {
+                        class: tileClass,
+                        style: `grid-column: ${x + 1}; grid-row: ${y + 1};`
+                    }));
+                }
+            });
+        });
+
+        const dynamicContainerVNode = FacileJS.createElement('div', {
+            class: 'dynamic-container',
+            ref: (el) => { if (el) this.dynamicElementContainer = el; }
+        });
+
+        return FacileJS.createElement('div', {
+            class: 'board',
+            style: `grid-template-columns: repeat(${map[0].length}, ${this.CELL_SIZE}px); grid-template-rows: repeat(${map.length}, ${this.CELL_SIZE}px);`
+        }, ...wallAndBlockCells, dynamicContainerVNode);
+    },
+
+    updatePool({ pool, items, key, className, updateFunc }) {
+        if (!this.dynamicElementContainer) return;
+        items.forEach(item => {
+            const itemKey = key(item);
+            const fullKey = `${className}-${itemKey}`;
+            this.activeElements.add(fullKey);
+            let el = pool.get(itemKey);
+            if (!el) {
+                el = document.createElement('div');
+                pool.set(itemKey, el);
+                this.dynamicElementContainer.appendChild(el);
+            }
+            updateFunc(el, item);
+        });
+    },
+
+    update(gameState) {
+        if (!this.dynamicElementContainer) return;
+        this.activeElements.clear();
+
+        this.updatePool({
+            pool: this.playerPool, items: gameState.players, key: p => p.id, className: 'player',
+            updateFunc: (el, p) => {
+                el.className = `player player-${p.id} ${p.isAlive ? '' : 'dead'}`;
+                el.style.transform = `translate(${p.x}px, ${p.y}px)`;
+            }
+        });
+
+        this.updatePool({
+            pool: this.bombPool, items: gameState.bombs || [], key: b => `${b.x}-${b.y}`, className: 'bomb',
+            updateFunc: (el, b) => {
+                el.className = 'bomb';
+                const x = b.x * this.CELL_SIZE;
+                const y = b.y * this.CELL_SIZE;
+                el.style.transform = `translate(${x}px, ${y}px)`;
+            }
+        });
+
+        this.updatePool({
+            pool: this.powerUpPool, items: gameState.powerUps || [], key: p => `${p.x}-${p.y}`, className: 'power-up',
+            updateFunc: (el, p) => {
+                el.className = `power-up ${p.type}`;
+                const x = p.x * this.CELL_SIZE;
+                const y = p.y * this.CELL_SIZE;
+                el.style.transform = `translate(${x}px, ${y}px)`;
+            }
+        });
+
+        const explosionCells = new Map();
+        (gameState.explosions || []).forEach(exp => {
+            exp.cells.forEach(cell => {
+                const key = `${cell.x}-${cell.y}`;
+                if (!explosionCells.has(key)) explosionCells.set(key, cell);
+            });
+        });
+
+        this.updatePool({
+            pool: this.explosionPool, items: Array.from(explosionCells.values()), key: cell => `${cell.x}-${cell.y}`, className: 'explosion',
+            updateFunc: (el, cell) => {
+                el.className = 'explosion';
+                const x = cell.x * this.CELL_SIZE;
+                const y = cell.y * this.CELL_SIZE;
+                el.style.transform = `translate(${x}px, ${y}px)`;
+            }
+        });
+
+        const cleanup = (pool, prefix) => {
+            for (const [key, el] of pool.entries()) {
+                if (!this.activeElements.has(`${prefix}-${key}`)) {
+                    el.remove();
+                    pool.delete(key);
+                }
+            }
+        };
+
+        cleanup(this.playerPool, 'player');
+        cleanup(this.bombPool, 'bomb');
+        cleanup(this.powerUpPool, 'power-up');
+        cleanup(this.explosionPool, 'explosion');
+    },
+
+    reset() {
+        if (this.dynamicElementContainer) {
+            this.dynamicElementContainer.innerHTML = '';
+        }
+        this.playerPool.clear();
+        this.bombPool.clear();
+        this.explosionPool.clear();
+        this.powerUpPool.clear();
+        this.activeElements.clear();
+    }
+};
+
+// --- Input Handling ---
+const keyboardState = {}; // Tracks which keys are currently held down
+const keyMap = {
+    ArrowUp: 'up', KeyW: 'up',
+    ArrowDown: 'down', KeyS: 'down',
+    ArrowLeft: 'left', KeyA: 'left',
+    ArrowRight: 'right', KeyD: 'right',
+};
+
 const handleKeyDown = (e) => {
-    if (keyboardState.hasOwnProperty(e.code)) {
-        e.preventDefault();
+    const direction = keyMap[e.code];
+    if (direction && !keyboardState[e.code]) {
         keyboardState[e.code] = true;
+        ws.send(JSON.stringify({ type: 'START_MOVING', payload: direction }));
     }
 };
 
 const handleKeyUp = (e) => {
-    if (keyboardState.hasOwnProperty(e.code)) {
-        e.preventDefault();
+    const direction = keyMap[e.code];
+    if (direction) {
         keyboardState[e.code] = false;
+        ws.send(JSON.stringify({ type: 'STOP_MOVING', payload: direction }));
     }
 };
 
 const handleKeyPress = (e) => {
-    if (e.code === 'Space') {
-        if (store.getState().screen === 'game') {
-            e.preventDefault();
-            ws.send(JSON.stringify({ type: 'PLACE_BOMB' }));
-        }
+    if (e.code === 'Space' && store.getState().screen === 'game') {
+        e.preventDefault();
+        ws.send(JSON.stringify({ type: 'PLACE_BOMB' }));
     }
 };
 
@@ -82,66 +269,20 @@ function App() {
         case 'gameover': screenComponent = GameOverScreen(); break;
         default: screenComponent = NicknameScreen(); break;
     }
-
-    // This wrapper div will handle all keyboard events.
-    // It needs a tabindex to be focusable.
-    return FacileJS.createElement('div',
-        {
-            class: 'app-container',
-            tabindex: '0',
-            autofocus: true, // Automatically focus on render
-            onkeydown: handleKeyDown,
-            onkeyup: handleKeyUp,
-            onkeypress: handleKeyPress,
-        },
-        screenComponent
-    );
+    return FacileJS.createElement('div', { class: 'app-container', tabindex: '0', autofocus: true, onkeydown: handleKeyDown, onkeyup: handleKeyUp, onkeypress: handleKeyPress, }, screenComponent);
 }
 
-// --- Game Loop and Input Handling ---
-const keyboardState = {
-    ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false,
-    KeyW: false, KeyA: false, KeyS: false, KeyD: false,
-};
-
-
+// The game loop is now only for animation, not for sending input.
 function gameLoop() {
-    if (store.getState().screen === 'game') {
-        const direction = {
-            up: keyboardState.ArrowUp || keyboardState.KeyW,
-            down: keyboardState.ArrowDown || keyboardState.KeyS,
-            left: keyboardState.ArrowLeft || keyboardState.KeyA,
-            right: keyboardState.ArrowRight || keyboardState.KeyD,
-        };
-        // Only send if a key is pressed
-        if (Object.values(direction).some(v => v)) {
-            ws.send(JSON.stringify({ type: 'MOVE_PLAYER', payload: direction }));
-        }
-    }
     requestAnimationFrame(gameLoop);
 }
 
-// --- App Initialization ---
-const rootElement = document.getElementById('root');
-const update = FacileJS.createApp(App, rootElement);
-store.subscribe(update);
-requestAnimationFrame(gameLoop); // Start the game loop
-
-// --- Re-add omitted components for completeness ---
 function ChatComponent() {
-    const state = store.getState();
-    let currentMessage = '';
+    const state = store.getState(); let currentMessage = '';
     const handleInput = (e) => { currentMessage = e.target.value; };
-    const handleSendMessage = () => {
-        if (currentMessage.trim().length > 0) {
-            ws.send(JSON.stringify({ type: 'SEND_CHAT_MESSAGE', payload: { message: currentMessage } }));
-            // This is a bit of a hack to clear the input. A better way would be to control the input value via state.
-        }
-    };
+    const handleSendMessage = () => { if (currentMessage.trim().length > 0) { ws.send(JSON.stringify({ type: 'SEND_CHAT_MESSAGE', payload: { message: currentMessage } })); } };
     return FacileJS.createElement('div', { class: 'chat-container' },
-        FacileJS.createElement('div', { class: 'messages' },
-            ...state.chatMessages.map(msg => FacileJS.createElement('p', { class: 'message' }, FacileJS.createElement('strong', {}, `${msg.nickname}: `), msg.message))
-        ),
+        FacileJS.createElement('div', { class: 'messages' }, ...state.chatMessages.map(msg => FacileJS.createElement('p', { class: 'message' }, FacileJS.createElement('strong', {}, `${msg.nickname}: `), msg.message))),
         FacileJS.createElement('input', { type: 'text', placeholder: 'Type a message...', oninput: handleInput, onkeyup: (e) => { if (e.keyCode === 13) { handleSendMessage(); e.target.value = ''; } } })
     );
 }
@@ -149,12 +290,7 @@ function ChatComponent() {
 function NicknameScreen() {
     let nickname = '';
     const handleInput = (e) => { nickname = e.target.value; };
-    const handleJoin = () => {
-        if (nickname.trim().length > 0) {
-            store.dispatch({ type: 'SET_NICKNAME', payload: nickname });
-            ws.send(JSON.stringify({ type: 'JOIN_GAME', payload: { nickname } }));
-        }
-    };
+    const handleJoin = () => { if (nickname.trim().length > 0) { store.dispatch({ type: 'SET_NICKNAME', payload: nickname }); ws.send(JSON.stringify({ type: 'JOIN_GAME', payload: { nickname } })); } };
     return FacileJS.createElement('div', { class: 'container nickname-screen' },
         FacileJS.createElement('h1', {}, 'Bomberman-DOM'),
         FacileJS.createElement('input', { type: 'text', placeholder: 'Enter your nickname', oninput: handleInput, onkeyup: (e) => e.keyCode === 13 && handleJoin() }),
@@ -174,90 +310,24 @@ function LobbyScreen() {
     );
 }
 
-function BoardComponent({ map, players, bombs, explosions, powerUps }) {
-    const CELL_SIZE = 50;
-    const getTileClass = (tile) => {
-        if (tile === TILE.WALL) return 'cell wall';
-        if (tile === TILE.BLOCK) return 'cell block';
-        return 'cell';
-    };
-
-    // Create the base grid cells. These are just for the background.
-    const cells = map.flat().map((tile, i) => {
-        const x = i % map[0].length;
-        const y = Math.floor(i / map[0].length);
-        return FacileJS.createElement('div', { class: getTileClass(tile), 'data-x': x, 'data-y': y });
-    });
-
-    // Create player elements. They are positioned absolutely.
-    const playerElements = players
-        .filter(p => p.isAlive)
-        .map(p => {
-            return FacileJS.createElement('div', {
-                class: `player player-${p.id}`,
-                style: `transform: translate(${p.x}px, ${p.y}px);`
-            });
-        });
-
-    // Create bomb elements. They are positioned absolutely.
-    const bombElements = (bombs || []).map(b => {
-        const x = b.x * CELL_SIZE;
-        const y = b.y * CELL_SIZE;
-        return FacileJS.createElement('div', {
-            class: 'bomb',
-            style: `transform: translate(${x}px, ${y}px);`
-        });
-    });
-
-    // Create explosion elements. They are positioned absolutely.
-    const explosionElements = (explosions || []).flatMap(exp =>
-        exp.cells.map(cell => {
-            const x = cell.x * CELL_SIZE;
-            const y = cell.y * CELL_SIZE;
-            return FacileJS.createElement('div', {
-                class: 'explosion',
-                style: `transform: translate(${x}px, ${y}px);`
-            });
-        })
-    );
-
-    // Create power-up elements.
-    const powerUpElements = (powerUps || []).map(p => {
-        const x = p.x * CELL_SIZE;
-        const y = p.y * CELL_SIZE;
-        return FacileJS.createElement('div', {
-            class: `power-up ${p.type}`,
-            style: `transform: translate(${x}px, ${y}px);`
-        });
-    });
-
-    // The board is a grid container for the cells, but also a relative
-    // container for the absolutely positioned players, bombs, and explosions.
-    return FacileJS.createElement('div', {
-        class: 'board',
-        style: `grid-template-columns: repeat(${map[0].length}, ${CELL_SIZE}px); grid-template-rows: repeat(${map.length}, ${CELL_SIZE}px);`
-    }, ...cells, ...powerUpElements, ...playerElements, ...bombElements, ...explosionElements);
+function BoardRendererComponent({ map }) {
+    boardManager.reset();
+    return boardManager.createBoard(map);
 }
 
 function PlayerStatus({ players }) {
     return FacileJS.createElement('div', { class: 'player-status-container' },
-        ...players.map(p => {
-            return FacileJS.createElement('div', { class: `player-status player-${p.id} ${p.isAlive ? '' : 'dead'}` },
-                FacileJS.createElement('span', { class: 'nickname' }, p.nickname),
-                FacileJS.createElement('span', { class: 'lives' }, `Lives: ${p.lives}`)
-            );
-        })
+        ...players.map(p => FacileJS.createElement('div', { class: `player-status player-${p.id} ${p.isAlive ? '' : 'dead'}` },
+            FacileJS.createElement('span', { class: 'nickname' }, p.nickname),
+            FacileJS.createElement('span', { class: 'lives' }, `Lives: ${p.lives}`)
+        ))
     );
 }
 
 function GameOverScreen() {
     const { winner } = store.getState();
-    const handlePlayAgain = () => {
-        window.location.reload();
-    };
-
+    const handlePlayAgain = () => { window.location.reload(); };
     const message = winner ? `${winner.nickname} Wins!` : "It's a Draw!";
-
     return FacileJS.createElement('div', { class: 'container game-over-screen' },
         FacileJS.createElement('h1', {}, 'Game Over'),
         FacileJS.createElement('h2', {}, message),
@@ -266,13 +336,29 @@ function GameOverScreen() {
 }
 
 function GameScreen() {
-    const { map, players, bombs, explosions, powerUps } = store.getState().gameState;
+    const { map, players } = store.getState().gameState;
     if (!map || map.length === 0) {
         return FacileJS.createElement('div', {}, 'Loading game...');
     }
     return FacileJS.createElement('div', { class: 'game-container' },
         PlayerStatus({ players }),
-        BoardComponent({ map, players, bombs: bombs || [], explosions: explosions || [], powerUps: powerUps || [] }),
+        BoardRendererComponent({ map }),
         ChatComponent()
     );
 }
+
+// --- App Initialization ---
+const rootElement = document.getElementById('root');
+const update = FacileJS.createApp(App, rootElement);
+
+store.subscribe(() => {
+    const state = store.getState();
+    update(); // Always run the framework's update for static UI and screen transitions
+    if (state.screen === 'game' && state.gameState.map.length > 0) {
+        boardManager.update(state.gameState);
+    } else {
+        boardManager.reset();
+    }
+});
+
+requestAnimationFrame(gameLoop);

@@ -93,6 +93,8 @@ body {
     position: relative; /* Make it a positioning context */
     border: 2px solid #666;
     background-color: #5a8c5a;
+    background-image: radial-gradient(circle, #6b9b6b 2px, transparent 2px);
+    background-size: 50px 50px;
     /* Each cell will implicitly create the grid structure */
 }
 
