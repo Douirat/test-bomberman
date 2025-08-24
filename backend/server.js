@@ -13,6 +13,7 @@ let lobbyState = {
 };
 let mainGameState = null;
 let gameLoopInterval = null;
+let nextPlayerId = 1;
 
 const LOBBY_WAIT_TIME = 20000;
 const COUNTDOWN_TIME = 10;
@@ -123,7 +124,7 @@ wss.on('connection', (ws) => {
       const existingPlayer = lobbyState.players.find(p => p.ws === ws);
       if (!existingPlayer && lobbyState.players.length < 4 && lobbyState.status !== 'inprogress') {
         const newPlayer = {
-          id: `player-${Math.random().toString(36).substr(2, 9)}`,
+          id: nextPlayerId++,
           ws: ws,
           nickname: data.payload.nickname,
           isAlive: true,
