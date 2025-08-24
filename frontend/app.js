@@ -82,6 +82,13 @@ function reducer(state = initialState, action) {
             if (player) player.isAlive = false;
             break;
           }
+          case 'BLOCK_DESTROYED': {
+            const { x, y } = change.payload;
+            if (newGameState.map[y] && newGameState.map[y][x] !== undefined) {
+              newGameState.map[y][x] = 0; // TILE.EMPTY
+            }
+            break;
+          }
           case 'POWERUP_SPAWNED':
             newGameState.powerUps.push(change.payload);
             break;
