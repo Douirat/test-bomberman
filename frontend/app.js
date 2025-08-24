@@ -66,6 +66,11 @@ function reducer(state = initialState, action) {
           case 'BOMB_PLACED':
             newGameState.bombs.push(change.payload);
             break;
+          case 'BOMB_EXPLODED': {
+            const { x, y } = change.payload;
+            newGameState.bombs = newGameState.bombs.filter(b => b.x !== x || b.y !== y);
+            break;
+          }
           case 'EXPLOSION_STARTED':
             newGameState.explosions.push(change.payload);
             break;

@@ -89,6 +89,8 @@ function handleExplosions(gameState) {
     while(newBombsToExplode) {
         newBombsToExplode = false;
         explodingBombs.forEach(bomb => {
+            // Create event before adding to explosion cells
+            changes.push({ type: 'BOMB_EXPLODED', payload: { x: bomb.x, y: bomb.y } });
             newExplosionCells.add(`${bomb.x},${bomb.y}`);
             const directions = [[0, -1], [1, 0], [0, 1], [-1, 0]];
             directions.forEach(([dx, dy]) => {
