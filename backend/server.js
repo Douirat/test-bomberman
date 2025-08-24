@@ -49,8 +49,6 @@ function startGame() {
 function gameTick() {
     if (!mainGameState) return;
 
-    mainGameState.changes = [];
-
     // 1. Update all player positions based on their current movement state
     mainGameState.players.forEach(player => {
         updatePlayerPosition(player, mainGameState);
@@ -73,6 +71,7 @@ function gameTick() {
     // 5. Broadcast the diff if there are any changes
     if (mainGameState.changes.length > 0) {
         broadcast({ type: 'GAME_STATE_DIFF', payload: mainGameState.changes });
+        mainGameState.changes = []; // Clear changes after broadcasting
     }
 
     // 6. Check for win condition
