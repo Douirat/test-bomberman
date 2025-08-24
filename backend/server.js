@@ -27,6 +27,19 @@ function broadcast(data) {
   });
 }
 
+function resetLobby() {
+    console.log('Resetting lobby.');
+    lobbyState = {
+        status: 'waiting',
+        players: [],
+        lobbyTimer: null,
+        countdownTimer: null,
+    };
+    nextPlayerId = 1;
+    // Optional: Inform clients that the lobby has reset
+    // broadcast({ type: 'LOBBY_RESET' });
+}
+
 function broadcastLobbyState() {
   broadcast({
     type: 'UPDATE_LOBBY_STATE',
@@ -87,6 +100,7 @@ function gameTick() {
             }
         });
         mainGameState = null;
+        resetLobby();
     }
 }
 
