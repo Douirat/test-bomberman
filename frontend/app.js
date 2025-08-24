@@ -66,6 +66,11 @@ function reducer(state = initialState, action) {
           case 'BOMB_PLACED':
             newGameState.bombs.push(change.payload);
             break;
+          case 'BOMB_EXPLODED': {
+            const { x, y } = change.payload;
+            newGameState.bombs = newGameState.bombs.filter(b => b.x !== x || b.y !== y);
+            break;
+          }
           case 'EXPLOSION_STARTED':
             newGameState.explosions.push(change.payload);
             break;
@@ -80,6 +85,13 @@ function reducer(state = initialState, action) {
           case 'PLAYER_DIED': {
             const player = newGameState.players.find(p => p.id === change.payload.id);
             if (player) player.isAlive = false;
+            break;
+          }
+          case 'BLOCK_DESTROYED': {
+            const { x, y } = change.payload;
+            if (newGameState.map[y] && newGameState.map[y][x] !== undefined) {
+              newGameState.map[y][x] = 0; // TILE.EMPTY
+            }
             break;
           }
           case 'POWERUP_SPAWNED':

@@ -79,38 +79,55 @@ function handlePlaceBomb(player, gameState) {
 
 function handleExplosions(gameState) {
     const { bombs, map, players, explosions, changes } = gameState;
-    const explodingBombs = bombs.filter(b => b.timer <= 0);
+    let explodingBombs = bombs.filter(b => b.timer <= 0);
     if (explodingBombs.length === 0) return;
 
     const newExplosionCells = new Set();
-    const destroyedBlocks = [];
 
-    explodingBombs.forEach(bomb => {
-        newExplosionCells.add(`${bomb.x},${bomb.y}`);
-        const directions = [[0, -1], [1, 0], [0, 1], [-1, 0]];
-        directions.forEach(([dx, dy]) => {
-            for (let i = 1; i <= bomb.flame; i++) {
-                const x = bomb.x + dx * i;
-                const y = bomb.y + dy * i;
-                if (x < 0 || x >= MAP_WIDTH_CELLS || y < 0 || y >= MAP_HEIGHT_CELLS) break;
-                const tile = map[y][x];
-                if (tile === TILE.WALL) break;
-                newExplosionCells.add(`${x},${y}`);
-                if (tile === TILE.BLOCK) {
-                    map[y][x] = TILE.EMPTY;
-                    destroyedBlocks.push({ x, y });
-                    if (Math.random() < 0.3) {
-                        const powerUpTypes = ['flame', 'bombs', 'speed'];
-                        const type = powerUpTypes[Math.floor(Math.random() * powerUpTypes.length)];
-                        const newPowerUp = { x, y, type };
-                        gameState.powerUps.push(newPowerUp);
-                        changes.push({ type: 'POWERUP_SPAWNED', payload: newPowerUp });
+    // Chain reaction loop
+    let newBombsToExplode = true;
+    while(newBombsToExplode) {
+        newBombsToExplode = false;
+        explodingBombs.forEach(bomb => {
+            // Create event before adding to explosion cells
+            changes.push({ type: 'BOMB_EXPLODED', payload: { x: bomb.x, y: bomb.y } });
+            newExplosionCells.add(`${bomb.x},${bomb.y}`);
+            const directions = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+            directions.forEach(([dx, dy]) => {
+                for (let i = 1; i <= bomb.flame; i++) {
+                    const x = bomb.x + dx * i;
+                    const y = bomb.y + dy * i;
+                    if (x < 0 || x >= MAP_WIDTH_CELLS || y < 0 || y >= MAP_HEIGHT_CELLS) break;
+                    const tile = map[y][x];
+                    if (tile === TILE.WALL) break;
+                    newExplosionCells.add(`${x},${y}`);
+
+                    // Check for chain reaction
+                    const otherBombIndex = bombs.findIndex(b => b.x === x && b.y === y && b.timer > 0);
+                    if (otherBombIndex !== -1) {
+                        bombs[otherBombIndex].timer = 0;
+                        newBombsToExplode = true;
                     }
-                    break;
+
+                    if (tile === TILE.BLOCK) {
+                        map[y][x] = TILE.EMPTY;
+                        changes.push({ type: 'BLOCK_DESTROYED', payload: { x, y } });
+                        if (Math.random() < 0.3) {
+                            const powerUpTypes = ['flame', 'bombs', 'speed'];
+                            const type = powerUpTypes[Math.floor(Math.random() * powerUpTypes.length)];
+                            const newPowerUp = { x, y, type };
+                            gameState.powerUps.push(newPowerUp);
+                            changes.push({ type: 'POWERUP_SPAWNED', payload: newPowerUp });
+                        }
+                        break;
+                    }
                 }
-            }
+            });
         });
-    });
+        // Update the list of bombs to explode for the next iteration of the while loop
+        explodingBombs = bombs.filter(b => b.timer <= 0);
+    }
+
 
     if (newExplosionCells.size > 0) {
         const explosionData = { cells: Array.from(newExplosionCells).map(s => ({x: parseInt(s.split(',')[0]), y: parseInt(s.split(',')[1])})), timer: 0.5 };

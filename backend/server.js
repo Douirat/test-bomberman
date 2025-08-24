@@ -27,6 +27,19 @@ function broadcast(data) {
   });
 }
 
+function resetLobby() {
+    console.log('Resetting lobby.');
+    lobbyState = {
+        status: 'waiting',
+        players: [],
+        lobbyTimer: null,
+        countdownTimer: null,
+    };
+    nextPlayerId = 1;
+    // Optional: Inform clients that the lobby has reset
+    // broadcast({ type: 'LOBBY_RESET' });
+}
+
 function broadcastLobbyState() {
   broadcast({
     type: 'UPDATE_LOBBY_STATE',
@@ -87,6 +100,7 @@ function gameTick() {
             }
         });
         mainGameState = null;
+        resetLobby();
     }
 }
 
@@ -127,7 +141,6 @@ wss.on('connection', (ws) => {
           ws: ws,
           nickname: data.payload.nickname,
           isAlive: true,
-          // Add other player stats as needed from game.js
         };
         lobbyState.players.push(newPlayer);
         ws.playerId = newPlayer.id; // Associate ws connection with a player ID
@@ -178,27 +191,22 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    const playerIndex = lobbyState.players.findIndex(p => p.ws === ws);
-    if (playerIndex !== -1) {
-        const player = lobbyState.players[playerIndex];
+    const player = lobbyState.players.find(p => p.ws === ws);
+    if (player) {
         console.log(`Player ${player.nickname} disconnected`);
-        lobbyState.players.splice(playerIndex, 1);
-
+        lobbyState.players = lobbyState.players.filter(p => p.id !== player.id);
         if (lobbyState.status !== 'inprogress') {
             if (lobbyState.players.length < 2) {
                 clearTimeout(lobbyState.lobbyTimer);
-                if (lobbyState.countdownTimer) clearInterval(lobbyState.countdownTimer.interval);
                 lobbyState.lobbyTimer = null;
-                lobbyState.countdownTimer = null;
+            }
+            if (lobbyState.status === 'countdown') {
+                clearInterval(lobbyState.countdownTimer.interval);
                 lobbyState.status = 'waiting';
             }
             broadcastLobbyState();
-        } else if (mainGameState) {
-            const gamePlayer = mainGameState.players.find(p => p.id === player.id);
-            if(gamePlayer) {
-                gamePlayer.isAlive = false;
-                mainGameState.changes.push({ type: 'PLAYER_DIED', payload: { id: player.id } });
-            }
+        } else {
+            mainGameState.players = mainGameState.players.filter(p => p.id !== player.id);
         }
     }
   });
