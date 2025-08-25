@@ -158,7 +158,7 @@ const boardManager = {
         }, ...wallAndBlockCells, dynamicContainerVNode);
     },
 
-    updatePool({ pool, items, key, className, updateFunc }) {
+    updatePool({ pool, items, key, className, updateFunc, tag = 'div' }) {
         if (!this.dynamicElementContainer) return;
         items.forEach(item => {
             const itemKey = key(item);
@@ -166,7 +166,7 @@ const boardManager = {
             this.activeElements.add(fullKey);
             let el = pool.get(itemKey);
             if (!el) {
-                el = document.createElement('div');
+                el = document.createElement(tag);
                 pool.set(itemKey, el);
                 this.dynamicElementContainer.appendChild(el);
             }
@@ -179,17 +179,27 @@ const boardManager = {
         this.activeElements.clear();
 
         this.updatePool({
-            pool: this.playerPool, items: gameState.players, key: p => p.id, className: 'player',
+            pool: this.playerPool,
+            items: gameState.players,
+            key: p => p.id,
+            className: 'player',
+            tag: 'img', // Create an <img> element for players
             updateFunc: (el, p) => {
                 el.className = `player player-${p.id} ${p.isAlive ? '' : 'dead'}`;
+                el.src = '/assets/ghost.png'; // Use local ghost image
                 el.style.transform = `translate(${p.x}px, ${p.y}px)`;
             }
         });
 
         this.updatePool({
-            pool: this.bombPool, items: gameState.bombs || [], key: b => `${b.x}-${b.y}`, className: 'bomb',
+            pool: this.bombPool,
+            items: gameState.bombs || [],
+            key: b => `${b.x}-${b.y}`,
+            className: 'bomb',
+            tag: 'img', // Create an <img> element
             updateFunc: (el, b) => {
                 el.className = 'bomb';
+                el.src = 'https://static.thenounproject.com/png/2881495-200.png'; // Set the image source
                 const x = b.x * this.CELL_SIZE;
                 const y = b.y * this.CELL_SIZE;
                 el.style.transform = `translate(${x}px, ${y}px)`;
@@ -355,10 +365,17 @@ function BoardRendererComponent({ map }) {
 
 function PlayerStatus({ players }) {
     return FacileJS.createElement('div', { class: 'player-status-container' },
-        ...players.map(p => FacileJS.createElement('div', { class: `player-status player-${p.id} ${p.isAlive ? '' : 'dead'}` },
-            FacileJS.createElement('span', { class: 'nickname' }, p.nickname),
-            FacileJS.createElement('span', { class: 'lives' }, `Lives: ${p.lives}`)
-        ))
+        ...players.map(p => {
+            const lifeIcons = Array.from({ length: p.lives }, () =>
+                FacileJS.createElement('div', { class: 'life-icon' })
+            );
+
+            return FacileJS.createElement('div', { class: `player-status player-${p.id} ${p.isAlive ? '' : 'dead'}` },
+                FacileJS.createElement('div', { class: 'player-icon' }),
+                FacileJS.createElement('span', { class: 'nickname' }, p.nickname),
+                FacileJS.createElement('div', { class: 'lives-container' }, ...lifeIcons)
+            );
+        })
     );
 }
 
