@@ -6,38 +6,24 @@ console.log('Server started on port 8080');
 
 const rooms = new Map();
 
-function findOrCreateRoom(roomId = '') {
+function findOrCreateRoom() {
     let room = null;
-
-    if (roomId && rooms.has(roomId)) {
-        const potentialRoom = rooms.get(roomId);
-        if (potentialRoom.lobbyState.status === 'waiting' && potentialRoom.lobbyState.players.length < 4) {
-            room = potentialRoom;
-        } else {
-            // Room is full or in-game, so we can't join. Return null.
-            return null;
-        }
-    } else {
-        // Find any available room if no specific one is requested or found
-        for (const r of rooms.values()) {
-            if (r.lobbyState.status === 'waiting' && r.lobbyState.players.length < 4) {
-                room = r;
-                break;
-            }
+    // Find a room that is waiting for players
+    for (const r of rooms.values()) {
+        if (r.lobbyState.status === 'waiting' && r.lobbyState.players.length < 4) {
+            room = r;
+            break;
         }
     }
-
-    // If no room is found, create a new one, but only if no specific roomId was requested
-    if (!room && !roomId) {
-        const newRoomId = `room-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-        room = new Room(newRoomId);
-        rooms.set(newRoomId, room);
-        console.log(`Created new room: ${newRoomId}`);
+    // If no waiting room is found, create a new one
+    if (!room) {
+        const roomId = `room-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        room = new Room(roomId);
+        rooms.set(roomId, room);
+        console.log(`Created new room: ${roomId}`);
     }
-
     return room;
 }
-
 
 wss.on('connection', (ws) => {
     console.log('Client connected');
@@ -47,15 +33,9 @@ wss.on('connection', (ws) => {
             const data = JSON.parse(rawMessage);
 
             if (data.type === 'JOIN_GAME') {
-                const { nickname, roomId } = data.payload;
-                const room = findOrCreateRoom(roomId);
-
-                if (room) {
-                    room.addPlayer(ws, nickname);
-                } else {
-                    // Send an error message back to the client
-                    ws.send(JSON.stringify({ type: 'ERROR', payload: `Room ${roomId} is full, does not exist, or game is in progress.` }));
-                }
+                // For a new player, we find or create a room and add them.
+                const room = findOrCreateRoom();
+                room.addPlayer(ws, data.payload.nickname);
             } else {
                 // For existing players, their messages are handled by their room.
                 const roomId = ws.roomId;

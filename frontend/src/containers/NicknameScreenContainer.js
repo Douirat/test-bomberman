@@ -4,10 +4,9 @@ import { router } from '../router.js';
 import { NicknameScreen } from '../components/NicknameScreen.js';
 
 export function NicknameScreenContainer() {
-    const handleJoin = (nickname, roomId) => {
+    const handleJoin = (nickname) => {
         store.dispatch({ type: 'SET_NICKNAME', payload: nickname });
-        // Include roomId in the payload if it's provided
-        send({ type: 'JOIN_GAME', payload: { nickname, roomId } });
+        send({ type: 'JOIN_GAME', payload: { nickname } });
     };
 
     return NicknameScreen({ onJoin: handleJoin });
